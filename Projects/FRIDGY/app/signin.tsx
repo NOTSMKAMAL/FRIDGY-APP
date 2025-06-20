@@ -1,7 +1,7 @@
 import * as React from "react";
 import { Text, StyleSheet, View, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import Google from "../assets/";
+import Google from "../assets/google.svg";
 import Apple from "../assets/apple.svg";
 
 export default function SignIn() {
