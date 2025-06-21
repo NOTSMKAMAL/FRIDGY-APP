@@ -1,141 +1,116 @@
-import * as React from "react";
-import { Text, StyleSheet, View, Pressable } from "react-native";
+// SignIn.tsx
+
+import React, { useRef, useEffect } from "react";
+import {
+  View,
+  Text,
+  Pressable,
+  Animated,
+  Easing,
+  useWindowDimensions,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Google from "../assets/google.svg";
 import Apple from "../assets/apple.svg";
 
+const COLORS = ["#960018", "#196000", "#E86100", "#702963", "#005F84"] as const;
+
 export default function SignIn() {
+  const anim = useRef(new Animated.Value(0)).current;
+  const { height: H, width: W } = useWindowDimensions();
+
+  // dynamic sizes
+  const BUTTON_WIDTH = W * 0.8;
+  const BUTTON_HEIGHT = H * 0.07;
+  const ICON_SIZE = W * 0.085;
+
+  // loop scrolling animation
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(anim, {
+        toValue: 1,
+        duration: 50_000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  }, [anim]);
+
+  const translateY = anim.interpolate({
+    inputRange: COLORS.map((_, i) => i / COLORS.length).concat(1),
+    outputRange: COLORS.map((_, i) => -H * i).concat(-H * COLORS.length),
+  });
+
   return (
-    <SafeAreaView style={styles.viewBg}>
-      <View style={[styles.view, styles.viewBg]}>
-        <Text style={[styles.fridgy, styles.orPosition]}>FRIDGY</Text>
-        <Pressable style={[styles.child, styles.itemLayout]} onPress={() => {}} />
-        <Pressable style={[styles.item, styles.itemLayout]} onPress={() => {}} />
-        <Text style={[styles.signUp, styles.loginTypo]}>Sign up</Text>
-        <Text style={[styles.login, styles.loginTypo]}>Login</Text>
-        <View style={styles.googleParent}>
-          <Google style={styles.googleIcon} width={32} height={32} />
-          <Apple style={styles.appleIcon} />
+    <View className="flex-1 overflow-hidden">
+      {/* animated color strips */}
+      <Animated.View
+        style={[
+          { width: W, height: H * COLORS.length * 2, transform: [{ translateY }] },
+        ]}
+      >
+        {[...COLORS, ...COLORS].map((color, i) => (
+          <View
+            key={i}
+            style={{ backgroundColor: color, width: W, height: H }}
+          />
+        ))}
+      </Animated.View>
+
+      <SafeAreaView className="absolute inset-0">
+        <View className="flex-1 items-center justify-center px-5">
+          
+          {/* Title */}
+          <Text className="text-[46px] font-extrabold text-white mb-8">
+            FRIDGY
+          </Text>
+
+          {/* Login Button */}
+          <Pressable
+            onPress={() => {}}
+            className="items-center justify-center mb-4"
+            style={{
+              width: BUTTON_WIDTH,
+              height: BUTTON_HEIGHT,
+              borderWidth: 2,
+              borderColor: "rgba(190,190,190,0.35)",
+              borderRadius: 24,
+              backgroundColor: "#fff",
+            }}
+          >
+            <Text className="text-lg font-bold text-[#960018]">Login</Text>
+          </Pressable>
+
+          {/* Sign‐Up Button */}
+          <Pressable
+            onPress={() => {}}
+            className="items-center justify-center mb-8"
+            style={{
+              width: BUTTON_WIDTH,
+              height: BUTTON_HEIGHT,
+              borderWidth: 2,
+              borderColor: "rgba(190,190,190,0.35)",
+              borderRadius: 24,
+              backgroundColor: "#fff",
+            }}
+          >
+            <Text className="text-lg font-bold text-[#960018]">Sign up</Text>
+          </Pressable>
+
+          {/* Or Divider */}
+          <View className="flex-row items-center w-full px-10 mb-6">
+            <View className="flex-1 h-px bg-white" />
+            <Text className="mx-2 text-xs font-medium text-white">Or</Text>
+            <View className="flex-1 h-px bg-white" />
+          </View>
+
+          {/* Social Icons */}
+          <View className="flex-row items-center space-x-6">
+            <Google width={32} height={32} style={{ marginRight: 24 }}/>
+            <Apple width={34} height={34} />
+          </View>
         </View>
-        <Text style={[styles.or, styles.orPosition]}>Or</Text>
-        <View style={[styles.inner, styles.innerLayout]} />
-        <View style={[styles.lineView, styles.innerLayout]} />
-      </View>
-    </SafeAreaView>
+      </SafeAreaView>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  viewBg: {
-    flex: 1,
-    backgroundColor: "#960018"
-  },
-  view: {
-    width: "100%",
-    height: "100%",
-    overflow: "hidden"
-  },
-  orPosition: {
-    position: "absolute",
-    left: "50%",
-    textAlign: "left",
-    color: "#fff"
-  },
-  itemLayout: {
-    position: "absolute",
-    left: "50%",
-    width: 333,
-    height: 52,
-    marginLeft: -166.5,
-    borderWidth: 2,
-    borderColor: "rgba(190, 190, 190, 0.35)",
-    borderRadius: 24,
-    backgroundColor: "#fff"
-  },
-  loginTypo: {
-    position: "absolute",
-    left: "50%",
-    textAlign: "left",
-    color: "#960018",
-    fontFamily: "Inter-Bold",
-    fontWeight: "700",
-    fontSize: 16
-  },
-  innerLayout: {
-    position: "absolute",
-    height: 1,
-    width: 106,
-    borderTopWidth: 1,
-    borderColor: "#fff",
-    borderStyle: "solid"
-  },
-  fridgy: {
-    position: "absolute",
-    top: 180,
-    left: "50%",
-    marginLeft: -86.5,
-    fontSize: 46,
-    fontWeight: "800",
-    fontFamily: "Inter-ExtraBold",
-    color: "#fff"
-  },
-  child: {
-    position: "absolute",
-    top: 405
-  },
-  item: {
-    position: "absolute",
-    top: 469
-  },
-  signUp: {
-    position: "absolute",
-    top: 485,
-    left: "50%",
-    marginLeft: -29.5
-  },
-  login: {
-    position: "absolute",
-    top: 421,
-    left: "50%",
-    marginLeft: -21.5
-  },
-  googleParent: {
-    position: "absolute",
-    top: 574,
-    left: 152,
-    width: 90,
-    height: 34
-  },
-  googleIcon: {
-    position: "absolute",
-    top: 1,
-    left: 0
-  },
-  appleIcon: {
-    position: "absolute",
-    top: 0,
-    left: "62.22%",
-    width: "37.78%",
-    height: "100%"
-  },
-  or: {
-    position: "absolute",
-    top: 541,
-    left: "50%",
-    marginLeft: -4.5,
-    fontSize: 8,
-    fontWeight: "500",
-    fontFamily: "Poppins-Medium",
-    color: "#fff"
-  },
-  inner: {
-    position: "absolute",
-    top: 547,
-    left: 75
-  },
-  lineView: {
-    position: "absolute",
-    top: 547,
-    left: 214
-  }
-});
