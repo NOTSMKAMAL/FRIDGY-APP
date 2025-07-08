@@ -51,13 +51,14 @@ export default function Login() {
         toValue: 1,
         duration: 12000,
         useNativeDriver: false,
+        isInteraction: false,
       })
     ).start();
     const id = anim.addListener(({ value }) => {
-      const idx = value * (COLORS.length - 1);
-      const i = Math.floor(idx);
+      const idx = value * COLORS.length;
+      const i = Math.floor(idx) % COLORS.length;
       const j = (i + 1) % COLORS.length;
-      const t = idx - i;
+      const t = idx - Math.floor(idx);
       setGradientColors([
         lerpColor(COLORS[i], COLORS[j], t),
         lerpColor(COLORS[j], COLORS[(j + 1) % COLORS.length], t),
@@ -75,7 +76,7 @@ export default function Login() {
     setError(null);
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
-      router.replace('/(app)/home');
+      router.replace('/(app)/fridge');
     } catch (err: any) {
       let message = err.message;
       if (err.code === 'auth/user-not-found') {
@@ -155,7 +156,7 @@ export default function Login() {
 
           {/* Forgot / Sign Up Links */}
           <View style={{ flexDirection: 'row', marginBottom: 16 }}>
-            <Text style={{ color: 'white', marginRight: 8 }}>Don't have an account?</Text>
+            <Text style={{ color: 'white', marginRight: 8 }}>Don&apos;t have an account?</Text>
             <Pressable onPress={() => router.push('/(auth)/signup')}>
               <Text style={{ color: '#4285F4', fontWeight: 'bold' }}>Sign up</Text>
             </Pressable>

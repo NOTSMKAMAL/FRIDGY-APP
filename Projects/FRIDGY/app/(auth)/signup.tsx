@@ -37,7 +37,7 @@ export default function SignUp() {
   const router = useRouter();
 
   // form state
-  const [name, setName] = useState("");
+  // const [name] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -52,13 +52,14 @@ export default function SignUp() {
         toValue: 1,
         duration: 12000,
         useNativeDriver: false,
+        isInteraction: false,
       })
     ).start();
     const id = anim.addListener(({ value }) => {
-      const idx = value * (COLORS.length - 1);
-      const i = Math.floor(idx);
+      const idx = value * COLORS.length;
+      const i = Math.floor(idx) % COLORS.length;
       const j = (i + 1) % COLORS.length;
-      const t = idx - i;
+      const t = idx - Math.floor(idx);
       setGradientColors([
         lerpColor(COLORS[i], COLORS[j], t),
         lerpColor(COLORS[j], COLORS[(j + 1) % COLORS.length], t),
@@ -139,7 +140,7 @@ export default function SignUp() {
               setError(null);
               try {
                 await createUserWithEmailAndPassword(auth, email.trim(), password);
-                router.replace('/(app)/home');
+                router.replace('/(app)/fridge');
               } catch (err: any) {
                 let message = err.message;
                 if (err.code === 'auth/email-already-in-use') {

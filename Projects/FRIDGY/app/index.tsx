@@ -1,10 +1,11 @@
 import { Redirect } from 'expo-router';
-import { onAuthStateChanged } from 'firebase/auth';
+import { onAuthStateChanged, User } from 'firebase/auth';
 import { useEffect, useState } from 'react';
+import { View, Text, ActivityIndicator } from 'react-native';
 import { auth } from '../FirebaseConfig';
 
 export default function Index() {
-  const [user, setUser] = useState<any>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
@@ -15,10 +16,17 @@ export default function Index() {
     return unsubscribe;
   }, []);
 
-  if (!checked) return null;
+  if (!checked) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
+        <ActivityIndicator size="large" color="#960018" />
+        <Text style={{ marginTop: 10, color: '#666' }}>Loading...</Text>
+      </View>
+    );
+  }
 
   if (user) {
-    return <Redirect href="/(app)/home" />;
+    return <Redirect href="/(app)/fridge" />;
   }
   return <Redirect href="/(auth)/login" />;
 } 

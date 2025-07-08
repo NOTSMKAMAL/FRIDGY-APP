@@ -25,10 +25,25 @@ const app =
     ? initializeApp(firebaseConfig)
     : getApps()[0];
 
-// Use native persistence only on mobile; fallback to web auth on web
-export const auth =
-  Platform.OS !== "web"
-    ? initializeAuth(app, {
-        persistence: getReactNativePersistence(AsyncStorage)
-      })
-    : getAuth(app);
+// Initialize auth safely for both web and mobile
+let auth;
+try {
+  if (Platform.OS !== "web") {
+    // For React Native, check if auth is already initialized
+    auth = getAuth(app);
+  } else {
+    // For web, use getAuth
+    auth = getAuth(app);
+  }
+} catch (error) {
+  // If getAuth fails, try initializeAuth for React Native
+  if (Platform.OS !== "web") {
+    auth = initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage)
+    });
+  } else {
+    throw error;
+  }
+}
+
+export { auth };
