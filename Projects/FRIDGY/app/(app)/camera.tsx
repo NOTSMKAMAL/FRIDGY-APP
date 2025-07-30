@@ -3,6 +3,7 @@ import { View, Text, Pressable, Alert } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { findFoodIdByBarcode, getFoodById } from '../../API/fatsecret';
 
 export default function Camera() {
   const [facing, setFacing] = useState<'back' | 'front'>('back');
