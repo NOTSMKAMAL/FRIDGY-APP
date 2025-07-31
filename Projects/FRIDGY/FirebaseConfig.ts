@@ -20,30 +20,19 @@ const firebaseConfig = {
   measurementId: "G-34NXCRG82Z"
 };
 
-const app =
-  getApps().length === 0
-    ? initializeApp(firebaseConfig)
-    : getApps()[0];
+const app = getApps().length > 0
+  ? getApps()[0]
+  : initializeApp(firebaseConfig);
 
-// Initialize auth safely for both web and mobile
 let auth;
-try {
-  if (Platform.OS !== "web") {
-    // For React Native, check if auth is already initialized
-    auth = getAuth(app);
-  } else {
-    // For web, use getAuth
-    auth = getAuth(app);
-  }
-} catch (error) {
-  // If getAuth fails, try initializeAuth for React Native
-  if (Platform.OS !== "web") {
-    auth = initializeAuth(app, {
-      persistence: getReactNativePersistence(AsyncStorage)
-    });
-  } else {
-    throw error;
-  }
+if (Platform.OS === "web") {
+  // On web you still use the normal getAuth()
+  auth = getAuth(app);
+} else {
+  // On React Native, explicitly initializeAuth with AsyncStorage persistence
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(AsyncStorage)
+  });
 }
 
 export { auth };
