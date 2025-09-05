@@ -74,5 +74,5 @@
 //   console.log(`Server listening on port ${PORT}`);
 // });
 
-require('dotenv').config()
-console.log(process.env.FATSECRET_CONSUMER_KEY)
+require('dotenv').config();
+console.log(process.env.FATSECRET_CONSUMER_KEY);
