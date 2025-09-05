@@ -1,0 +1,32 @@
+# Node / build
+node_modules
+dist
+build
+.expo
+.next
+
+# Env & secrets
+.env
+*.env
+
+# Lock files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Configs that shouldn’t be auto-formatted
+babel.config.js
+metro.config.js
+tailwind.config.js
+postcss.config.js
+eslint.config.js
+app.config.js
+
+# Firebase config
+firebase.json
+database.rules.json
+.firebaserc
+
+# Other special cases
+CLAUDE.md
+CLAUDE.md.save
