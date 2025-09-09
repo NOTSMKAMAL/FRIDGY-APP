@@ -21,15 +21,16 @@ const firebaseConfig = {
 
 const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
 
+// Ensure React Native persistence (survives app restarts)
 let auth;
-if (Platform.OS === 'web') {
-  // On web you still use the normal getAuth()
-  auth = getAuth(app);
-} else {
-  // On React Native, explicitly initializeAuth with AsyncStorage persistence
+try {
+  // First load after a fresh start: initialize with RN persistence
   auth = initializeAuth(app, {
     persistence: getReactNativePersistence(AsyncStorage),
   });
+} catch {
+  // Hot reload / already initialized: reuse existing instance
+  auth = getAuth(app);
 }
 
-export { auth };
+export { app, auth };

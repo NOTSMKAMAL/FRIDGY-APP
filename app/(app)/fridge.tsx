@@ -1,5 +1,5 @@
 // app/(app)/fridge.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Text,
   View,
@@ -10,7 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { onAuthStateChanged } from 'firebase/auth';
 import { auth } from '../../FirebaseConfig';
@@ -97,6 +97,23 @@ export default function Fridge() {
     if (!hasLoaded || !storageKey) return;
     AsyncStorage.setItem(storageKey, JSON.stringify(sections)).catch(() => {});
   }, [sections, hasLoaded, storageKey]);
+
+  // 🔄 Refresh when the Fridge tab/screen regains focus (e.g., after adding from Camera)
+  useFocusEffect(
+    useCallback(() => {
+      let canceled = false;
+      (async () => {
+        if (!storageKey) return;
+        try {
+          const raw = await AsyncStorage.getItem(storageKey);
+          if (!canceled && raw) setSections(JSON.parse(raw));
+        } catch {}
+      })();
+      return () => {
+        canceled = true;
+      };
+    }, [storageKey]),
+  );
 
   const addSection = () => {
     const name = newName.trim();
