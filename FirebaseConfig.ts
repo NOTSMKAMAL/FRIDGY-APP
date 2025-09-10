@@ -27,7 +27,6 @@ const firebaseConfig = {
 const app: FirebaseApp =
   getApps().length > 0 ? getApps()[0]! : initializeApp(firebaseConfig);
 
-// Auth (keeps your behavior; avoids double-init on RN)
 let auth: Auth;
 if (Platform.OS === 'web') {
   auth = getAuth(app);
@@ -62,3 +61,4 @@ export const ensureAnonAuth = (): Promise<User> =>
 
 export const db = getFirestore(app);
 export { app, auth, serverTimestamp };
+
