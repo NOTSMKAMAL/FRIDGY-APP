@@ -1,23 +1,29 @@
+// app.config.js
 export default ({ config }) => ({
   ...config,
   expo: {
     ...config.expo,
+
     name: "Fridgy",
-    slug: "Fridgy",
+    slug: "fridgy",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/images/icon.png",
-    scheme: "fridgy",
     userInterfaceStyle: "automatic",
     newArchEnabled: true,
 
+    // one scheme only — used by AuthSession redirectUri
+    scheme: "fridgy",
+
     ios: {
       supportsTablet: true,
-      bundleIdentifier: "com.anonymous.fridgy", // iOS ID
+      // ✅ exactly one bundleIdentifier
+      bundleIdentifier: "com.anonymous.fridgy",
     },
 
     android: {
-      package: "com.anonymous.fridgy", // 👈 REQUIRED: manually add this
+      // ✅ exactly one package
+      package: "com.anonymous.fridgy",
       adaptiveIcon: {
         foregroundImage: "./assets/images/adaptive-icon.png",
         backgroundColor: "#ffffff",
@@ -31,8 +37,10 @@ export default ({ config }) => ({
       favicon: "./assets/images/favicon.png",
     },
 
+    // ✅ one plugins array
     plugins: [
       "expo-router",
+      "expo-apple-authentication",
       [
         "expo-splash-screen",
         {
@@ -54,4 +62,3 @@ export default ({ config }) => ({
     },
   },
 });
-

@@ -1,6 +1,12 @@
+// app/(auth)/SignUp.tsx
+
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
+import {
+  createUserWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithCredential,
+} from 'firebase/auth';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
@@ -13,16 +19,26 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+
+// ✅ Use YOUR initialized Firebase auth instance
 import { auth } from '../../FirebaseConfig';
+
+// Google Auth Session
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
+import { makeRedirectUri } from 'expo-auth-session';
+
+WebBrowser.maybeCompleteAuthSession();
+
 const COLORS = [
-  '#660033', // deep maroon
-  '#702963', // purple
-  '#7A3803', // brown
-  '#545F4C', // olive gray
-  '#06402B', // dark green
-  '#5D6E74', // muted blue-gray
-  '#005F84', // teal blue
-  '#293570', // navy blue
+  '#660033',
+  '#702963',
+  '#7A3803',
+  '#545F4C',
+  '#06402B',
+  '#5D6E74',
+  '#005F84',
+  '#293570',
 ];
 
 function lerpColor(a: string, b: string, t: number) {
@@ -45,8 +61,7 @@ export default function SignUp() {
   const { height: H, width: W } = useWindowDimensions();
   const router = useRouter();
 
-  // form state
-  // const [name] = useState("");
+  // ----- state
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -57,7 +72,43 @@ export default function SignUp() {
   ]);
   const [error, setError] = useState<string | null>(null);
 
-  // Animate gradient color stops
+  // ----- Google auth request
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
+    iosClientId:
+      '23914527840-03b9o8mo1etecj3jal3d3540jo7rdoud.apps.googleusercontent.com', // ✅ your iOS ID
+    androidClientId: 'YOUR_ANDROID_CLIENT_ID.apps.googleusercontent.com', // ← replace
+    clientId: 'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com', // ← replace
+    redirectUri: makeRedirectUri({ scheme: 'fridgy' }), // scheme must match app.config.js
+  });
+
+  useEffect(() => {
+    const run = async () => {
+      if (response?.type === 'success') {
+        const idToken = (response.params as any)?.id_token;
+        if (idToken) {
+          const cred = GoogleAuthProvider.credential(idToken);
+          await signInWithCredential(auth, cred);
+          router.replace('/(app)/fridge');
+        }
+      }
+    };
+    run().catch((e) => setError(e?.message ?? 'Google sign-in failed'));
+  }, [response]);
+
+  async function signInWithGoogle() {
+    try {
+      if (!request) {
+        setError('Google sign-in not ready yet.');
+        return;
+      }
+      // Works in Expo Go
+      await promptAsync({ useProxy: true, showInRecents: true });
+    } catch (err: any) {
+      setError(err?.message ?? 'Google sign-in failed');
+    }
+  }
+
+  // ----- animated gradient
   useEffect(() => {
     Animated.loop(
       Animated.timing(anim, {
@@ -92,7 +143,7 @@ export default function SignUp() {
           style={{ width: W, height: H }}
         />
       </Animated.View>
-      {/* overlay form */}
+
       <SafeAreaView
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
       >
@@ -117,7 +168,7 @@ export default function SignUp() {
             FRIDGY
           </Text>
 
-          {/* Email input */}
+          {/* Email */}
           <TextInput
             value={email}
             onChangeText={(text) => {
@@ -139,7 +190,7 @@ export default function SignUp() {
             }}
           />
 
-          {/* Password input */}
+          {/* Password */}
           <TextInput
             value={password}
             onChangeText={(text) => {
@@ -181,7 +232,7 @@ export default function SignUp() {
             }}
           />
 
-          {/* Error Message UI */}
+          {/* Error */}
           {error && (
             <Text
               style={{
@@ -198,7 +249,7 @@ export default function SignUp() {
             </Text>
           )}
 
-          {/* Sign Up button */}
+          {/* Email/Password Sign Up */}
           <Pressable
             onPress={async () => {
               if (!email || !password || !confirm) {
@@ -220,9 +271,8 @@ export default function SignUp() {
                 router.replace('/(app)/fridge');
               } catch (err: any) {
                 let message = err.message;
-                if (err.code === 'auth/email-already-in-use') {
+                if (err.code === 'auth/email-already-in-use')
                   message = 'Email already in use.';
-                }
                 setError(message);
               } finally {
                 setLoading(false);
@@ -233,7 +283,7 @@ export default function SignUp() {
               paddingVertical: 16,
               alignItems: 'center',
               borderRadius: 24,
-              marginBottom: 24,
+              marginBottom: 16,
               backgroundColor: 'rgba(255,255,255,0.9)',
             }}
             disabled={loading}
@@ -245,8 +295,25 @@ export default function SignUp() {
             </Text>
           </Pressable>
 
+          {/* Google Sign-In */}
+          <Pressable
+            onPress={signInWithGoogle}
+            style={{
+              width: '100%',
+              height: 48,
+              borderRadius: 24,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: 'white',
+            }}
+          >
+            <Text style={{ fontWeight: 'bold', color: '#333' }}>
+              Continue with Google
+            </Text>
+          </Pressable>
+
           {/* Link back to Login */}
-          <View style={{ flexDirection: 'row' }}>
+          <View style={{ flexDirection: 'row', marginTop: 16 }}>
             <Text style={{ color: 'white', marginRight: 8 }}>
               Already have an account?
             </Text>
