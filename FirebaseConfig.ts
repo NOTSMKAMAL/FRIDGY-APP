@@ -1,10 +1,15 @@
 // FirebaseConfig.ts
-import { getApps, initializeApp } from 'firebase/app';
+import { getApps, initializeApp, type FirebaseApp } from 'firebase/app';
 import {
   getAuth,
   initializeAuth,
   getReactNativePersistence,
+  signInAnonymously,
+  onAuthStateChanged,
+  type User,
+  type Auth,
 } from 'firebase/auth';
+import { getFirestore, serverTimestamp } from 'firebase/firestore';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
@@ -19,17 +24,41 @@ const firebaseConfig = {
   measurementId: 'G-34NXCRG82Z',
 };
 
-const app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+const app: FirebaseApp =
+  getApps().length > 0 ? getApps()[0]! : initializeApp(firebaseConfig);
 
-let auth;
+// Auth (keeps your behavior; avoids double-init on RN)
+let auth: Auth;
 if (Platform.OS === 'web') {
-  // On web you still use the normal getAuth()
   auth = getAuth(app);
 } else {
-  // On React Native, explicitly initializeAuth with AsyncStorage persistence
-  auth = initializeAuth(app, {
-    persistence: getReactNativePersistence(AsyncStorage),
-  });
+  try {
+    auth = initializeAuth(app, {
+      persistence: getReactNativePersistence(AsyncStorage),
+    });
+  } catch {
+    auth = getAuth(app);
+  }
 }
 
-export { auth };
+// Ensure we have a user (anonymous)
+export const ensureAnonAuth = (): Promise<User> =>
+  new Promise((resolve, reject) => {
+    const unsub = onAuthStateChanged(auth, async (maybeUser) => {
+      if (maybeUser) {
+        unsub();
+        resolve(maybeUser);
+      } else {
+        try {
+          const cred = await signInAnonymously(auth);
+          unsub();
+          resolve(cred.user);
+        } catch (e) {
+          reject(e);
+        }
+      }
+    });
+  });
+
+export const db = getFirestore(app);
+export { app, auth, serverTimestamp };

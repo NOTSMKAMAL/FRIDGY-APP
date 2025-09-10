@@ -1,5 +1,4 @@
-// app/(app)/recipes.tsx
-import React, { useEffect, useMemo, useState, memo } from 'react';
+import React, { useEffect, useMemo, useState, memo, useRef } from 'react';
 import {
   View,
   Text,
@@ -14,21 +13,31 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 import DraggableFlatList, {
   RenderItemParams,
 } from 'react-native-draggable-flatlist';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { ensureAnonAuth, db, serverTimestamp } from '@/FirebaseConfig';
+import {
+  collection,
+  addDoc,
+  doc,
+  deleteDoc,
+  updateDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  writeBatch,
+} from 'firebase/firestore';
 
 type GroceryItem = {
   id: string;
   name: string;
-  qty?: string;
+  qty?: string | null;
   checked: boolean;
+  order?: number;
 };
-
-const STORAGE_KEY = 'fridgy:groceryList';
 
 const ItemRow = memo(function ItemRow({
   item,
@@ -38,7 +47,7 @@ const ItemRow = memo(function ItemRow({
   isActive,
 }: {
   item: GroceryItem;
-  onToggle: (id: string) => void;
+  onToggle: (id: string, next: boolean) => void;
   onRemove: (id: string) => void;
   drag: () => void;
   isActive: boolean;
@@ -56,19 +65,18 @@ const ItemRow = memo(function ItemRow({
         shadowRadius: 8,
         elevation: 8,
         flexDirection: 'row',
-        alignItems: 'center', // keep checkbox vertically centered
+        alignItems: 'center',
         opacity: isActive ? 0.9 : 1,
       }}
     >
-      {/* checkbox */}
       <TouchableOpacity
-        onPress={() => onToggle(item.id)}
+        onPress={() => onToggle(item.id, !item.checked)}
         activeOpacity={0.7}
         hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
         style={{
           width: 28,
           height: 28,
-          borderRadius: 14, // perfect circle
+          borderRadius: 14,
           backgroundColor: item.checked ? '#007AFF' : '#222',
           justifyContent: 'center',
           alignItems: 'center',
@@ -88,7 +96,6 @@ const ItemRow = memo(function ItemRow({
         )}
       </TouchableOpacity>
 
-      {/* text */}
       <View style={{ flex: 1 }}>
         <Text
           style={{
@@ -117,7 +124,6 @@ const ItemRow = memo(function ItemRow({
         )}
       </View>
 
-      {/* drag handle */}
       <TouchableOpacity
         onLongPress={drag}
         onPressIn={Platform.OS === 'android' ? drag : undefined}
@@ -130,7 +136,6 @@ const ItemRow = memo(function ItemRow({
         />
       </TouchableOpacity>
 
-      {/* delete */}
       <TouchableOpacity
         onPress={() => onRemove(item.id)}
         style={{ padding: 6, marginLeft: 6 }}
@@ -151,65 +156,122 @@ export default function GroceryList() {
   const [items, setItems] = useState<GroceryItem[]>([]);
   const [name, setName] = useState('');
   const [qty, setQty] = useState('');
-
-  // NEW: modal visibility
   const [showAddModal, setShowAddModal] = useState(false);
 
-  // load persisted list
+  const uidRef = useRef<string | null>(null);
+
   useEffect(() => {
+    let unsub: undefined | (() => void);
     (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(STORAGE_KEY);
-        if (raw) setItems(JSON.parse(raw));
-      } catch (e) {
-        console.warn('Failed to load grocery list', e);
-      }
+      const user = await ensureAnonAuth();
+      uidRef.current = user.uid;
+
+      const qRef = query(
+        collection(db, 'users', user.uid, 'items'),
+        orderBy('order', 'asc'),
+      );
+      unsub = onSnapshot(
+        qRef,
+        (snap) => {
+          const rows: GroceryItem[] = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<GroceryItem, 'id'>),
+          }));
+          setItems(rows);
+        },
+        (err) => {
+          console.log('onSnapshot error', err);
+          Alert.alert('Firestore error', err.message ?? String(err));
+        },
+      );
     })();
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
-  // persist on change
-  useEffect(() => {
-    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(items)).catch(() => {});
-  }, [items]);
-
-  const addItem = () => {
+  const addItem = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
       Alert.alert('Add Item', 'Please enter an item name.');
       return;
     }
-    const newItem: GroceryItem = {
-      id: Math.random().toString(36).slice(2),
-      name: trimmed,
-      qty: qty.trim() || undefined,
-      checked: false,
-    };
-    setItems((prev) => [newItem, ...prev]);
-    setName('');
-    setQty('');
-    Keyboard.dismiss();
-    setShowAddModal(false); // hide modal after adding
+    try {
+      const uid = uidRef.current ?? (await ensureAnonAuth()).uid;
+      const itemsRef = collection(db, 'users', uid, 'items');
+      const topOrder = items.length
+        ? Math.min(...items.map((i) => i.order ?? 0)) - 1
+        : 0;
+
+      await addDoc(itemsRef, {
+        name: trimmed,
+        qty: qty.trim() || null,
+        checked: false,
+        order: topOrder,
+        createdAt: serverTimestamp(),
+      });
+
+      setName('');
+      setQty('');
+      Keyboard.dismiss();
+      setShowAddModal(false);
+    } catch (err: any) {
+      console.log('addItem error', err);
+      Alert.alert('Could not add', err.message ?? String(err));
+    }
   };
 
-  const toggleItem = (id: string) => {
-    setItems((prev) =>
-      prev.map((i) => (i.id === id ? { ...i, checked: !i.checked } : i)),
-    );
+  const toggleItem = async (id: string, next: boolean) => {
+    try {
+      const uid = uidRef.current ?? (await ensureAnonAuth()).uid;
+      await updateDoc(doc(db, 'users', uid, 'items', id), { checked: next });
+    } catch (err: any) {
+      console.log('toggleItem error', err);
+    }
   };
 
-  const removeItem = (id: string) => {
-    setItems((prev) => prev.filter((i) => i.id !== id));
+  const removeItem = async (id: string) => {
+    try {
+      const uid = uidRef.current ?? (await ensureAnonAuth()).uid;
+      await deleteDoc(doc(db, 'users', uid, 'items', id));
+    } catch (err: any) {
+      console.log('removeItem error', err);
+    }
   };
 
-  const clearChecked = () => {
-    if (!items.some((i) => i.checked)) return;
-    setItems((prev) => prev.filter((i) => !i.checked));
+  const clearChecked = async () => {
+    try {
+      const uid = uidRef.current ?? (await ensureAnonAuth()).uid;
+      const batch = writeBatch(db);
+      items
+        .filter((i) => i.checked)
+        .forEach((i) => {
+          batch.delete(doc(db, 'users', uid, 'items', i.id));
+        });
+      await batch.commit();
+    } catch (err: any) {
+      console.log('clearChecked error', err);
+    }
   };
 
   const remaining = useMemo(
     () => items.filter((i) => !i.checked).length,
     [items],
   );
+
+  const onDragEnd = async (data: GroceryItem[]) => {
+    setItems(data);
+    try {
+      const uid = uidRef.current ?? (await ensureAnonAuth()).uid;
+      const batch = writeBatch(db);
+      data.forEach((item, index) => {
+        batch.update(doc(db, 'users', uid, 'items', item.id), { order: index });
+      });
+      await batch.commit();
+    } catch (err: any) {
+      console.log('reorder error', err);
+    }
+  };
 
   const renderItem = ({
     item,
@@ -236,7 +298,6 @@ export default function GroceryList() {
         />
 
         <SafeAreaView style={{ flex: 1 }}>
-          {/* Header */}
           <View
             style={{
               paddingHorizontal: 20,
@@ -259,8 +320,6 @@ export default function GroceryList() {
             >
               Grocery List
             </Text>
-
-            {/* Header "+" trigger */}
             <TouchableOpacity
               onPress={() => setShowAddModal(true)}
               style={{ position: 'absolute', right: 20, padding: 6 }}
@@ -270,7 +329,6 @@ export default function GroceryList() {
             </TouchableOpacity>
           </View>
 
-          {/* Actions row */}
           <View
             style={{
               paddingHorizontal: 20,
@@ -297,12 +355,11 @@ export default function GroceryList() {
             </TouchableOpacity>
           </View>
 
-          {/* Draggable list */}
           <View style={{ flex: 1, paddingHorizontal: 20, paddingBottom: 24 }}>
             <DraggableFlatList
               data={items}
               keyExtractor={(item) => item.id}
-              onDragEnd={({ data }) => setItems(data)}
+              onDragEnd={({ data }) => onDragEnd(data)}
               renderItem={renderItem}
               activationDistance={12}
               autoscrollThreshold={32}
@@ -324,7 +381,6 @@ export default function GroceryList() {
             />
           </View>
 
-          {/* Add Item Modal */}
           <Modal
             transparent
             visible={showAddModal}

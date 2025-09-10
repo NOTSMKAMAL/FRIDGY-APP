@@ -1,6 +1,11 @@
+// app/(auth)/Login.tsx
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
-import { signInWithEmailAndPassword } from 'firebase/auth';
+import {
+  signInWithEmailAndPassword,
+  GoogleAuthProvider,
+  signInWithCredential,
+} from 'firebase/auth';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
@@ -15,15 +20,21 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { auth } from '../../FirebaseConfig';
 
+import * as WebBrowser from 'expo-web-browser';
+import * as Google from 'expo-auth-session/providers/google';
+import { makeRedirectUri } from 'expo-auth-session';
+
+WebBrowser.maybeCompleteAuthSession();
+
 const COLORS = [
-  '#660033', // deep maroon
-  '#702963', // purple
-  '#7A3803', // brown
-  '#545F4C', // olive gray
-  '#06402B', // dark green
-  '#5D6E74', // muted blue-gray
-  '#005F84', // teal blue
-  '#293570', // navy blue
+  '#660033',
+  '#702963',
+  '#7A3803',
+  '#545F4C',
+  '#06402B',
+  '#5D6E74',
+  '#005F84',
+  '#293570',
 ];
 
 function lerpColor(a: string, b: string, t: number) {
@@ -46,7 +57,7 @@ export default function Login() {
   const { height: H, width: W } = useWindowDimensions();
   const router = useRouter();
 
-  // form state
+  // state
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -56,7 +67,43 @@ export default function Login() {
   ]);
   const [error, setError] = useState<string | null>(null);
 
-  // Animate gradient color stops
+  // Google auth (fill Android/Web IDs)
+  const [request, response, promptAsync] = Google.useIdTokenAuthRequest({
+    iosClientId:
+      '23914527840-03b9o8mo1etecj3jal3d3540jo7rdoud.apps.googleusercontent.com',
+    androidClientId: 'YOUR_ANDROID_CLIENT_ID.apps.googleusercontent.com', // ← replace
+    clientId: 'YOUR_WEB_CLIENT_ID.apps.googleusercontent.com', // ← replace
+    redirectUri: makeRedirectUri({ scheme: 'fridgy' }), // must match app.config.js
+  });
+
+  useEffect(() => {
+    const run = async () => {
+      if (response?.type === 'success') {
+        const idToken = (response.params as any)?.id_token;
+        if (idToken) {
+          const cred = GoogleAuthProvider.credential(idToken);
+          await signInWithCredential(auth, cred);
+          router.replace('/(app)/fridge');
+        }
+      }
+    };
+    run().catch((e) => setError(e?.message ?? 'Google sign-in failed'));
+  }, [response]);
+
+  async function signInWithGoogle() {
+    try {
+      if (!request) {
+        setError('Google sign-in not ready yet.');
+        return;
+      }
+      // Works in Expo Go
+      await promptAsync({ useProxy: true, showInRecents: true });
+    } catch (err: any) {
+      setError(err?.message ?? 'Google sign-in failed');
+    }
+  }
+
+  // Animated gradient
   useEffect(() => {
     Animated.loop(
       Animated.timing(anim, {
@@ -91,11 +138,12 @@ export default function Login() {
       router.replace('/(app)/fridge');
     } catch (err: any) {
       let message = err.message;
-      if (err.code === 'auth/user-not-found') {
+      if (err.code === 'auth/user-not-found')
         message = 'No account found with that email.';
-      } else if (err.code === 'auth/wrong-password') {
+      else if (err.code === 'auth/wrong-password')
         message = 'Incorrect password.';
-      }
+      else if (err.code === 'auth/too-many-requests')
+        message = 'Too many attempts. Try again later.';
       setError(message);
     } finally {
       setLoading(false);
@@ -114,6 +162,7 @@ export default function Login() {
           style={{ width: W, height: H }}
         />
       </Animated.View>
+
       <SafeAreaView
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
       >
@@ -176,12 +225,12 @@ export default function Login() {
               borderRadius: 24,
               paddingVertical: 16,
               paddingHorizontal: 24,
-              marginBottom: 32,
+              marginBottom: 16,
               color: '#333',
             }}
           />
 
-          {/* Error Message UI */}
+          {/* Error */}
           {error && (
             <Text
               style={{
@@ -198,7 +247,7 @@ export default function Login() {
             </Text>
           )}
 
-          {/* Login Button */}
+          {/* Email/Password Login */}
           <Pressable
             onPress={handleLogin}
             style={{
@@ -206,7 +255,7 @@ export default function Login() {
               paddingVertical: 16,
               alignItems: 'center',
               borderRadius: 24,
-              marginBottom: 24,
+              marginBottom: 16,
               backgroundColor: 'rgba(255,255,255,0.9)',
             }}
             disabled={loading}
@@ -218,8 +267,25 @@ export default function Login() {
             </Text>
           </Pressable>
 
-          {/* Forgot / Sign Up Links */}
-          <View style={{ flexDirection: 'row', marginBottom: 16 }}>
+          {/* Google Sign-In */}
+          <Pressable
+            onPress={signInWithGoogle}
+            style={{
+              width: '100%',
+              height: 48,
+              borderRadius: 24,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: 'white',
+            }}
+          >
+            <Text style={{ fontWeight: 'bold', color: '#333' }}>
+              Continue with Google
+            </Text>
+          </Pressable>
+
+          {/* Links */}
+          <View style={{ flexDirection: 'row', marginTop: 16 }}>
             <Text style={{ color: 'white', marginRight: 8 }}>
               Don&apos;t have an account?
             </Text>

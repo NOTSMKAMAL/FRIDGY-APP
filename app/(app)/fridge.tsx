@@ -1,5 +1,4 @@
-// app/(app)/fridge.tsx
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Text,
   View,
@@ -8,14 +7,32 @@ import {
   Modal,
   TextInput,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../../FirebaseConfig';
 
-type Section = { id: string; name: string; color: string };
+import { ensureAnonAuth, db, serverTimestamp } from '@/FirebaseConfig';
+
+import {
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  writeBatch,
+  getDocs,
+  type Timestamp,
+} from 'firebase/firestore';
+
+type Section = {
+  id: string;
+  name: string;
+  color: string;
+  createdAt?: Timestamp;
+};
 
 const PALETTE = [
   '#06402B',
@@ -28,11 +45,14 @@ const PALETTE = [
   '#293570',
 ];
 
-// Only used if the user has no saved sections yet
-const DEFAULT_SECTIONS: Section[] = [
+const DEFAULT_SECTIONS: Omit<Section, 'createdAt'>[] = [
   { id: 'fruits', name: 'Fruits', color: '#06402B' },
   { id: 'vegetables', name: 'Vegetables', color: '#702963' },
   { id: 'drinks', name: 'Drinks', color: '#005F84' },
+  { id: 'dairy', name: 'Dairy', color: '#660033' },
+  { id: 'meat', name: 'Meat & Protein', color: '#7A3803' },
+  { id: 'pantry', name: 'Pantry', color: '#545F4C' },
+  { id: 'snacks', name: 'Snacks', color: '#5D6E74' },
 ];
 
 export default function Fridge() {
@@ -40,7 +60,7 @@ export default function Fridge() {
 
   const [uid, setUid] = useState<string | null>(null);
   const [sections, setSections] = useState<Section[]>([]);
-  const [hasLoaded, setHasLoaded] = useState(false); // wait until we load from storage before rendering list
+  const [hasLoaded, setHasLoaded] = useState(false);
 
   const [addOpen, setAddOpen] = useState(false);
   const [newName, setNewName] = useState('');
@@ -49,80 +69,91 @@ export default function Fridge() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Section | null>(null);
 
-  const storageKey = useMemo(
-    () => (uid ? `fridgy:sections:${uid}` : null),
-    [uid],
-  );
+  const seedDefaultsIfNeeded = async (userId: string) => {
+    const sectionsRef = collection(db, 'users', userId, 'sections');
+    const snap = await getDocs(sectionsRef);
+    if (snap.empty) {
+      const batch = writeBatch(db);
+      DEFAULT_SECTIONS.forEach((s) => {
+        batch.set(doc(sectionsRef, s.id), {
+          name: s.name,
+          color: s.color,
+          createdAt: serverTimestamp(),
+        });
+      });
+      await batch.commit();
+    }
+  };
 
-  // Watch auth, then load sections for that user
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (user) => {
-      setUid(user ? user.uid : null);
-    });
-    return unsub;
+    let unsub: undefined | (() => void);
+
+    (async () => {
+      const user = await ensureAnonAuth();
+      setUid(user.uid);
+
+      await seedDefaultsIfNeeded(user.uid);
+
+      const sectionsRef = collection(db, 'users', user.uid, 'sections');
+      const qRef = query(sectionsRef, orderBy('createdAt', 'asc'));
+
+      unsub = onSnapshot(
+        qRef,
+        (snap) => {
+          const rows: Section[] = snap.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<Section, 'id'>),
+          }));
+          setSections(rows);
+          setHasLoaded(true);
+        },
+        (err) => {
+          console.log('sections onSnapshot error', err);
+          Alert.alert('Firestore error', err.message ?? String(err));
+          setHasLoaded(true);
+        },
+      );
+    })();
+
+    return () => {
+      if (unsub) unsub();
+    };
   }, []);
 
-  useEffect(() => {
-    // load when uid available
-    if (!storageKey) {
-      // not signed in yet; don't show defaults to avoid flicker
-      setHasLoaded(false);
+  const addSection = async () => {
+    const name = newName.trim();
+    if (!name) {
+      Alert.alert('Name required');
       return;
     }
-    (async () => {
-      try {
-        const raw = await AsyncStorage.getItem(storageKey);
-        if (raw) {
-          setSections(JSON.parse(raw) as Section[]);
-        } else {
-          // first time for this user — seed with defaults and persist
-          setSections(DEFAULT_SECTIONS);
-          await AsyncStorage.setItem(
-            storageKey,
-            JSON.stringify(DEFAULT_SECTIONS),
-          );
-        }
-      } catch (e) {
-        console.warn('Failed to load sections', e);
-        // fall back to defaults so app remains usable
-        setSections(DEFAULT_SECTIONS);
-      } finally {
-        setHasLoaded(true);
-      }
-    })();
-  }, [storageKey]);
 
-  // Persist whenever sections change (but only after initial load and with a uid)
-  useEffect(() => {
-    if (!hasLoaded || !storageKey) return;
-    AsyncStorage.setItem(storageKey, JSON.stringify(sections)).catch(() => {});
-  }, [sections, hasLoaded, storageKey]);
-
-  const addSection = () => {
-    const name = newName.trim();
-    if (!name) return;
-    const id = name
+    const baseId = name
       .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '') // strip non-url-safe chars
+      .replace(/[^a-z0-9\s-]/g, '')
       .replace(/\s+/g, '-');
 
-    // prevent duplicate ids
+    let id = baseId;
     if (sections.some((s) => s.id === id)) {
-      // simple suffix for uniqueness
       let n = 2;
-      let unique = `${id}-${n}`;
-      while (sections.some((s) => s.id === unique)) {
-        n += 1;
-        unique = `${id}-${n}`;
-      }
-      setSections((prev) => [...prev, { id: unique, name, color: newColor }]);
-    } else {
-      setSections((prev) => [...prev, { id, name, color: newColor }]);
+      while (sections.some((s) => s.id === `${baseId}-${n}`)) n += 1;
+      id = `${baseId}-${n}`;
     }
 
-    setAddOpen(false);
-    setNewName('');
-    setNewColor(PALETTE[0]);
+    try {
+      const uidNow = uid ?? (await ensureAnonAuth()).uid;
+      await setDoc(doc(db, 'users', uidNow, 'sections', id), {
+        name,
+        color: newColor,
+        createdAt: serverTimestamp(),
+      });
+
+      setAddOpen(false);
+      setNewName('');
+      setNewColor(PALETTE[0]);
+    } catch (e: any) {
+      console.log('addSection error', e);
+      Alert.alert('Could not create section', e?.message ?? String(e));
+    }
   };
 
   const requestDelete = (section: Section) => {
@@ -130,11 +161,31 @@ export default function Fridge() {
     setDeleteOpen(true);
   };
 
-  const confirmDelete = () => {
+  const confirmDelete = async () => {
     if (!pendingDelete) return;
-    setSections((prev) => prev.filter((s) => s.id !== pendingDelete.id));
-    setDeleteOpen(false);
-    setPendingDelete(null);
+    try {
+      const uidNow = uid ?? (await ensureAnonAuth()).uid;
+      const foodsCol = collection(
+        db,
+        'users',
+        uidNow,
+        'sections',
+        pendingDelete.id,
+        'foods',
+      );
+      const foods = await getDocs(foodsCol);
+
+      const batch = writeBatch(db);
+      foods.forEach((d) => batch.delete(d.ref));
+      batch.delete(doc(db, 'users', uidNow, 'sections', pendingDelete.id));
+      await batch.commit();
+    } catch (e: any) {
+      console.log('delete section error', e);
+      Alert.alert('Could not delete section', e?.message ?? String(e));
+    } finally {
+      setDeleteOpen(false);
+      setPendingDelete(null);
+    }
   };
 
   return (
@@ -154,7 +205,6 @@ export default function Fridge() {
         FRIDGY
       </Text>
 
-      {/* Search (placeholder) */}
       <View style={{ marginBottom: 20 }}>
         <Pressable
           style={{
@@ -173,7 +223,6 @@ export default function Fridge() {
         </Pressable>
       </View>
 
-      {/* Loading state until storage/auth resolved */}
       {!hasLoaded ? (
         <View
           style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
@@ -183,7 +232,6 @@ export default function Fridge() {
         </View>
       ) : (
         <>
-          {/* Sections */}
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{
@@ -239,7 +287,6 @@ export default function Fridge() {
                 </Pressable>
               ))}
 
-              {/* Add Section */}
               <Pressable
                 onPress={() => setAddOpen(true)}
                 style={{
@@ -266,7 +313,6 @@ export default function Fridge() {
             </View>
           </ScrollView>
 
-          {/* Add Section Modal */}
           <Modal
             animationType="slide"
             transparent
@@ -373,7 +419,6 @@ export default function Fridge() {
             </View>
           </Modal>
 
-          {/* Delete Section Modal */}
           <Modal
             transparent
             visible={deleteOpen}
@@ -410,7 +455,7 @@ export default function Fridge() {
                 <Text style={{ color: '#bbb', marginBottom: 16 }}>
                   {`Are you sure you want to delete "${
                     pendingDelete?.name ?? ''
-                  }"?`}
+                  }"? This will also remove foods in it.`}
                 </Text>
 
                 <View
