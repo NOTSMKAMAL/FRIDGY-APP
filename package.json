@@ -5,8 +5,8 @@
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
     "format": "prettier --write .",
@@ -41,6 +41,7 @@
     "expo-web-browser": "~14.2.0",
     "firebase": "^11.9.1",
     "nativewind": "^4.1.23",
+    "node": "^20.19.5",
     "oauth-1.0a": "^2.2.6",
     "query-string": "^7.1.3",
     "react": "19.0.0",
