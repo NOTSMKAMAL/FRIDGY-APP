@@ -31,6 +31,26 @@ function daysFromNow(n: number) {
   return d;
 }
 
+// ---- NEW: timeouts ----
+const SCAN_DETECT_TIMEOUT_MS = 8000; // time to wait for a barcode to be detected
+const LOOKUP_TIMEOUT_MS = 7000;      // time to wait for network lookups
+
+function withTimeout<T>(p: Promise<T>, ms: number, message = 'Timed out'): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
+}
+
 export default function Camera() {
   const router = useRouter();
 
@@ -57,6 +77,9 @@ export default function Camera() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
 
+  // NEW: guard to avoid spamming "Not found" while still on the same scanning session
+  const [noDetectShown, setNoDetectShown] = useState(false);
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUid(u ? u.uid : null));
     return unsub;
@@ -81,25 +104,55 @@ export default function Camera() {
     setNewSectionName('');
   }
 
+  // ---- NEW: if no barcode gets detected for a while, show "Not found" ----
+  useEffect(() => {
+    if (!permission?.granted) return;
+
+    // Only run the timer while we're actively waiting for a scan result,
+    // i.e., no current scan result, no food loaded, and the picker is closed.
+    const waitingForDetection = !pickerOpen && !scanned && !food;
+    if (!waitingForDetection) {
+      // Reset guard once user has a result or opens a modal
+      setNoDetectShown(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (!noDetectShown && !scanned && !food) {
+        setNoDetectShown(true);
+        Alert.alert('Not found', 'No barcode detected. Align the code in the frame and try again.');
+      }
+    }, SCAN_DETECT_TIMEOUT_MS);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permission?.granted, pickerOpen, scanned, food, noDetectShown]);
+
   /* scan handler */
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
     // ignore duplicate scans or scans while the picker is open
     if (!data || data === scanned || pickerOpen) return;
+
+    // Reset the "no-detect" guard since we got a detection event
+    setNoDetectShown(false);
+
     setScanned(data);
     setFood(null);
 
     try {
-      const foodId = await findFoodIdByBarcode(data, REGION);
+      // Timeout the lookup if it takes too long
+      const foodId = await withTimeout(findFoodIdByBarcode(data, REGION), LOOKUP_TIMEOUT_MS, 'Lookup timed out');
       if (!foodId) {
-        Alert.alert('No match');
+        Alert.alert('Not found', 'We couldn’t find a match for this barcode.');
         setScanned(null);
         return;
       }
-      const details = await getFoodById(foodId, REGION);
+      const details = await withTimeout(getFoodById(foodId, REGION), LOOKUP_TIMEOUT_MS, 'Details timed out');
       setFood(details);
       // NOTE: do NOT auto-open the picker here — opens only when user taps the button
-    } catch (err: any) {
-      Alert.alert('Lookup error', err?.message ?? String(err));
+    } catch {
+      // Per your request: if it takes too long OR anything goes wrong here → Not found
+      Alert.alert('Not found', 'We couldn’t retrieve details for this barcode. Please try again.');
       setScanned(null);
     }
   };
@@ -193,6 +246,7 @@ export default function Camera() {
     closePicker();
     setScanned(null);
     setFood(null);
+    setNoDetectShown(false);
     router.push({
       pathname: '/(app)/sections/id',
       params: { id: section.id, title: section.name, color: section.color },
@@ -358,6 +412,7 @@ export default function Camera() {
                   onPress={() => {
                     setScanned(null);
                     setFood(null);
+                    setNoDetectShown(false);
                   }}
                   style={{ backgroundColor: '#444', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}
                 >
@@ -431,3 +486,4 @@ export default function Camera() {
     </View>
   );
 }
+
