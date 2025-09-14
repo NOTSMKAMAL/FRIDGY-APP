@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+// app/(app)/fridge.tsx
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Text,
   View,
@@ -10,15 +11,14 @@ import {
   Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { ensureAnonAuth, db, serverTimestamp } from '@/FirebaseConfig';
-
+import { auth, db, serverTimestamp, ensureAnonAuth } from '@/FirebaseConfig';
 import {
   collection,
   doc,
   setDoc,
-  deleteDoc,
   onSnapshot,
   query,
   orderBy,
@@ -26,6 +26,7 @@ import {
   getDocs,
   type Timestamp,
 } from 'firebase/firestore';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 
 type Section = {
   id: string;
@@ -45,6 +46,7 @@ const PALETTE = [
   '#293570',
 ];
 
+// Shown for first-time users; also used to seed Firestore if empty
 const DEFAULT_SECTIONS: Omit<Section, 'createdAt'>[] = [
   { id: 'fruits', name: 'Fruits', color: '#06402B' },
   { id: 'vegetables', name: 'Vegetables', color: '#702963' },
@@ -54,6 +56,8 @@ const DEFAULT_SECTIONS: Omit<Section, 'createdAt'>[] = [
   { id: 'pantry', name: 'Pantry', color: '#545F4C' },
   { id: 'snacks', name: 'Snacks', color: '#5D6E74' },
 ];
+
+const storageKeyFor = (uid: string) => `fridgy:sections:${uid}`;
 
 export default function Fridge() {
   const router = useRouter();
@@ -69,7 +73,32 @@ export default function Fridge() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Section | null>(null);
 
-  const seedDefaultsIfNeeded = async (userId: string) => {
+  // --- Auth: prefer real user; fall back to anonymous if none ---
+  useEffect(() => {
+    const unsubAuth = onAuthStateChanged(auth, async (user) => {
+      try {
+        if (user?.uid) {
+          setUid(user.uid);
+          return;
+        }
+        // Prefer your helper if available; otherwise use Firebase's anon auth
+        // ts-expect-error ensureAnonAuth may be provided by your FirebaseConfig
+        const anon = typeof ensureAnonAuth === 'function'
+          ? await ensureAnonAuth()
+          : (await signInAnonymously(auth)).user;
+        setUid(anon.uid);
+      } catch (e) {
+        console.log('Auth error:', e);
+        // Last-ditch fallback
+        const { user: anon } = await signInAnonymously(auth);
+        setUid(anon.uid);
+      }
+    });
+    return unsubAuth;
+  }, []);
+
+  // Seed defaults into Firestore if the user has none
+  const seedDefaultsIfNeeded = useCallback(async (userId: string) => {
     const sectionsRef = collection(db, 'users', userId, 'sections');
     const snap = await getDocs(sectionsRef);
     if (snap.empty) {
@@ -83,43 +112,83 @@ export default function Fridge() {
       });
       await batch.commit();
     }
-  };
+  }, []);
 
+  // --- Data flow ---
   useEffect(() => {
+    if (!uid) return;
+
+    const key = storageKeyFor(uid);
+
     let unsub: undefined | (() => void);
+    let initialSnapshotHandled = false;
 
     (async () => {
-      const user = await ensureAnonAuth();
-      setUid(user.uid);
-
-      await seedDefaultsIfNeeded(user.uid);
-
-      const sectionsRef = collection(db, 'users', user.uid, 'sections');
-      const qRef = query(sectionsRef, orderBy('createdAt', 'asc'));
-
-      unsub = onSnapshot(
-        qRef,
-        (snap) => {
-          const rows: Section[] = snap.docs.map((d) => ({
-            id: d.id,
-            ...(d.data() as Omit<Section, 'id'>),
-          }));
-          setSections(rows);
+      try {
+        // 1) Bootstrap from local cache for instant paint (like your original file)
+        const cached = await AsyncStorage.getItem(key);
+        if (cached) {
+          setSections(JSON.parse(cached) as Section[]);
           setHasLoaded(true);
-        },
-        (err) => {
-          console.log('sections onSnapshot error', err);
-          Alert.alert('Firestore error', err.message ?? String(err));
+        }
+
+        // 2) Ensure Firestore has defaults
+        await seedDefaultsIfNeeded(uid);
+
+        // 3) Live subscription to Firestore
+        const sectionsRef = collection(db, 'users', uid, 'sections');
+        const qRef = query(sectionsRef, orderBy('createdAt', 'asc'));
+
+        unsub = onSnapshot(
+          qRef,
+          (snap) => {
+            const rows: Section[] = snap.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<Section, 'id'>),
+            }));
+            setSections(rows);
+            setHasLoaded(true);
+            // Write-through cache for next fast load
+            AsyncStorage.setItem(key, JSON.stringify(rows)).catch(() => {});
+            initialSnapshotHandled = true;
+          },
+          (err) => {
+            console.log('sections onSnapshot error', err);
+            Alert.alert('Firestore error', err.message ?? String(err));
+            setHasLoaded(true);
+          },
+        );
+      } catch (e) {
+        console.log('bootstrap error', e);
+        // Fallback to defaults if both cache+FS fail
+        if (!initialSnapshotHandled) {
+          setSections(DEFAULT_SECTIONS);
           setHasLoaded(true);
-        },
-      );
+        }
+      }
     })();
 
     return () => {
       if (unsub) unsub();
     };
-  }, []);
+  }, [uid, seedDefaultsIfNeeded]);
 
+  // Refresh from cache when this screen regains focus (mirrors your original UX)
+  useFocusEffect(
+    useCallback(() => {
+      let canceled = false;
+      (async () => {
+        if (!uid) return;
+        const raw = await AsyncStorage.getItem(storageKeyFor(uid));
+        if (!canceled && raw) setSections(JSON.parse(raw) as Section[]);
+      })();
+      return () => {
+        canceled = true;
+      };
+    }, [uid]),
+  );
+
+  // --- Mutations ---
   const addSection = async () => {
     const name = newName.trim();
     if (!name) {
@@ -140,8 +209,8 @@ export default function Fridge() {
     }
 
     try {
-      const uidNow = uid ?? (await ensureAnonAuth()).uid;
-      await setDoc(doc(db, 'users', uidNow, 'sections', id), {
+      if (!uid) throw new Error('No user');
+      await setDoc(doc(db, 'users', uid, 'sections', id), {
         name,
         color: newColor,
         createdAt: serverTimestamp(),
@@ -162,13 +231,13 @@ export default function Fridge() {
   };
 
   const confirmDelete = async () => {
-    if (!pendingDelete) return;
+    if (!pendingDelete || !uid) return;
     try {
-      const uidNow = uid ?? (await ensureAnonAuth()).uid;
+      // Cascade delete foods under the section
       const foodsCol = collection(
         db,
         'users',
-        uidNow,
+        uid,
         'sections',
         pendingDelete.id,
         'foods',
@@ -177,7 +246,7 @@ export default function Fridge() {
 
       const batch = writeBatch(db);
       foods.forEach((d) => batch.delete(d.ref));
-      batch.delete(doc(db, 'users', uidNow, 'sections', pendingDelete.id));
+      batch.delete(doc(db, 'users', uid, 'sections', pendingDelete.id));
       await batch.commit();
     } catch (e: any) {
       console.log('delete section error', e);
@@ -188,6 +257,7 @@ export default function Fridge() {
     }
   };
 
+  // --- UI ---
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#181818' }}>
       <Text
@@ -205,6 +275,7 @@ export default function Fridge() {
         FRIDGY
       </Text>
 
+      {/* Search (placeholder) */}
       <View style={{ marginBottom: 20 }}>
         <Pressable
           style={{
@@ -224,14 +295,13 @@ export default function Fridge() {
       </View>
 
       {!hasLoaded ? (
-        <View
-          style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
-        >
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color="#fff" />
           <Text style={{ color: '#aaa', marginTop: 8 }}>Loading…</Text>
         </View>
       ) : (
         <>
+          {/* Sections */}
           <ScrollView
             style={{ flex: 1 }}
             contentContainerStyle={{
@@ -287,6 +357,7 @@ export default function Fridge() {
                 </Pressable>
               ))}
 
+              {/* Add Section */}
               <Pressable
                 onPress={() => setAddOpen(true)}
                 style={{
@@ -304,15 +375,14 @@ export default function Fridge() {
                   elevation: 2,
                 }}
               >
-                <Text
-                  style={{ color: 'white', fontSize: 28, fontWeight: '300' }}
-                >
+                <Text style={{ color: 'white', fontSize: 28, fontWeight: '300' }}>
                   ＋
                 </Text>
               </Pressable>
             </View>
           </ScrollView>
 
+          {/* Add Section Modal */}
           <Modal
             animationType="slide"
             transparent
@@ -419,6 +489,7 @@ export default function Fridge() {
             </View>
           </Modal>
 
+          {/* Delete Section Modal */}
           <Modal
             transparent
             visible={deleteOpen}
@@ -458,9 +529,7 @@ export default function Fridge() {
                   }"? This will also remove foods in it.`}
                 </Text>
 
-                <View
-                  style={{ flexDirection: 'row', justifyContent: 'flex-end' }}
-                >
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
                   <Pressable
                     onPress={() => {
                       setDeleteOpen(false);

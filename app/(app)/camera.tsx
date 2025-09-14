@@ -7,7 +7,10 @@ import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { onAuthStateChanged } from 'firebase/auth';
+
 import { auth } from '../../FirebaseConfig';
+import { db, serverTimestamp, ensureAnonAuth } from '../../FirebaseConfig';
+import { collection, addDoc, doc, setDoc } from 'firebase/firestore';
 
 import { findFoodIdByBarcode, getFoodById } from '../../API/fatsecret';
 import { probe } from '../../API/FatSecretRFC5849Probe';
@@ -15,27 +18,37 @@ import { probe } from '../../API/FatSecretRFC5849Probe';
 const REGION = 'US';
 
 type Section = { id: string; name: string; color: string };
-type FoodItem = {
-  id: string;
-  name: string;
-  expirationISO: string;
-  calories: number;
-  protein: number;
-  carbs: number;
-  fats: number;
-  barcode?: string;
-  notifId?: string;
-};
 
 const SECTIONS_KEY = (uid: string) => `fridgy:sections:${uid}`;
-const ITEMS_KEY = (uid: string|null, sectionId: string) =>
-  uid ? `fridgy:${uid}:items:${sectionId}` : `fridgy:items:${sectionId}`;
+// IMPORTANT: matches app/(app)/sections/id.tsx bootstrap cache key
+const SECTION_ITEMS_CACHE_KEY = (uid: string, sectionId: string) =>
+  `fridgy:items:${uid}:${sectionId}`;
 
 function daysFromNow(n: number) {
   const d = new Date();
   d.setDate(d.getDate() + n);
   d.setHours(9, 0, 0, 0);
   return d;
+}
+
+// ---- NEW: timeouts ----
+const SCAN_DETECT_TIMEOUT_MS = 8000; // time to wait for a barcode to be detected
+const LOOKUP_TIMEOUT_MS = 7000;      // time to wait for network lookups
+
+function withTimeout<T>(p: Promise<T>, ms: number, message = 'Timed out'): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
 }
 
 export default function Camera() {
@@ -64,6 +77,9 @@ export default function Camera() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [newSectionName, setNewSectionName] = useState('');
 
+  // NEW: guard to avoid spamming "Not found" while still on the same scanning session
+  const [noDetectShown, setNoDetectShown] = useState(false);
+
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setUid(u ? u.uid : null));
     return unsub;
@@ -71,7 +87,10 @@ export default function Camera() {
 
   useEffect(() => {
     (async () => {
-      if (!uid) { setSectionsLoaded(false); return; }
+      if (!uid) {
+        setSectionsLoaded(false);
+        return;
+      }
       try {
         const raw = await AsyncStorage.getItem(SECTIONS_KEY(uid));
         if (raw) setSections(JSON.parse(raw) as Section[]);
@@ -85,80 +104,141 @@ export default function Camera() {
     setNewSectionName('');
   }
 
+  // ---- NEW: if no barcode gets detected for a while, show "Not found" ----
+  useEffect(() => {
+    if (!permission?.granted) return;
+
+    // Only run the timer while we're actively waiting for a scan result,
+    // i.e., no current scan result, no food loaded, and the picker is closed.
+    const waitingForDetection = !pickerOpen && !scanned && !food;
+    if (!waitingForDetection) {
+      // Reset guard once user has a result or opens a modal
+      setNoDetectShown(false);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (!noDetectShown && !scanned && !food) {
+        setNoDetectShown(true);
+        Alert.alert('Not found', 'No barcode detected. Align the code in the frame and try again.');
+      }
+    }, SCAN_DETECT_TIMEOUT_MS);
+
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permission?.granted, pickerOpen, scanned, food, noDetectShown]);
+
   /* scan handler */
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
     // ignore duplicate scans or scans while the picker is open
     if (!data || data === scanned || pickerOpen) return;
+
+    // Reset the "no-detect" guard since we got a detection event
+    setNoDetectShown(false);
+
     setScanned(data);
     setFood(null);
 
     try {
-      const foodId = await findFoodIdByBarcode(data, REGION);
+      // Timeout the lookup if it takes too long
+      const foodId = await withTimeout(findFoodIdByBarcode(data, REGION), LOOKUP_TIMEOUT_MS, 'Lookup timed out');
       if (!foodId) {
-        Alert.alert('No match');
+        Alert.alert('Not found', 'We couldn’t find a match for this barcode.');
         setScanned(null);
         return;
       }
-      const details = await getFoodById(foodId, REGION);
+      const details = await withTimeout(getFoodById(foodId, REGION), LOOKUP_TIMEOUT_MS, 'Details timed out');
       setFood(details);
       // NOTE: do NOT auto-open the picker here — opens only when user taps the button
-    } catch (err: any) {
-      Alert.alert('Lookup error', err?.message ?? String(err));
+    } catch {
+      // Per your request: if it takes too long OR anything goes wrong here → Not found
+      Alert.alert('Not found', 'We couldn’t retrieve details for this barcode. Please try again.');
       setScanned(null);
     }
   };
 
+  /** Create/find section in Firestore (and keep local cache in sync) */
   async function ensureSectionExists(name: string): Promise<Section | null> {
-    if (!uid) return null;
+    const user = uid ?? (await ensureAnonAuth()).uid;
     const trimmed = name.trim();
-    if (!trimmed) return null;
+    if (!user || !trimmed) return null;
 
-    // find existing (case-insensitive)
+    // best-effort refresh of local list
+    try {
+      const raw = await AsyncStorage.getItem(SECTIONS_KEY(user));
+      if (raw) setSections(JSON.parse(raw) as Section[]);
+    } catch {}
+
+    // check existing (case-insensitive) from current list
     const existing = sections.find(
       (s) => s.name.trim().toLowerCase() === trimmed.toLowerCase()
     );
     if (existing) return existing;
 
-    // create new section (id pattern same as your fridge screen)
-    let id = trimmed
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .replace(/\s+/g, '-');
+    // create deterministic id (with suffix if collision)
+    const base = trimmed.toLowerCase().replace(/[^a-z0-9\s-]/g, '').replace(/\s+/g, '-');
+    let id = base;
     if (sections.some((s) => s.id === id)) {
       let n = 2;
-      while (sections.some((s) => s.id === `${id}-${n}`)) n += 1;
-      id = `${id}-${n}`;
+      while (sections.some((s) => s.id === `${base}-${n}`)) n += 1;
+      id = `${base}-${n}`;
     }
+
     const color = '#2D2D2D';
+    await setDoc(doc(db, 'users', user, 'sections', id), {
+      name: trimmed,
+      color,
+      createdAt: serverTimestamp(),
+    });
+
     const created: Section = { id, name: trimmed, color };
     const next = [...sections, created];
     setSections(next);
-    try { await AsyncStorage.setItem(SECTIONS_KEY(uid), JSON.stringify(next)); } catch {}
+    try {
+      await AsyncStorage.setItem(SECTIONS_KEY(user), JSON.stringify(next));
+    } catch {}
+
     return created;
   }
 
+  /** Write scanned item to Firestore + write-through cache (matching reader key) */
   async function addScannedItemToSection(section: Section) {
     if (!serving || !food) return;
 
-    const item: FoodItem = {
-      id: Math.random().toString(36).slice(2),
-      name: food.food_name ?? 'Food',
-      expirationISO: daysFromNow(7).toISOString(), // default 7 days
+    const user = uid ?? (await ensureAnonAuth()).uid;
+
+    const when = daysFromNow(7);
+    const payload = {
+      name: String(food.food_name ?? 'Food'),
+      expiresAt: when, // Date -> Firestore Timestamp
       calories: Number(serving.calories ?? 0),
       protein: Number(serving.protein ?? 0),
       carbs: Number((serving.carbohydrate ?? serving.carbs) ?? 0),
       fats: Number(serving.fat ?? 0),
-      barcode: scanned ?? undefined,
+      barcode: scanned ?? null,
+      addedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
     };
 
-    const key = ITEMS_KEY(uid, section.id);
     try {
-      const raw = await AsyncStorage.getItem(key);
-      const arr = raw ? (JSON.parse(raw) as FoodItem[]) : [];
-      const next = [item, ...arr];
-      await AsyncStorage.setItem(key, JSON.stringify(next));
-    } catch {
-      Alert.alert('Save error', 'Could not save to section');
+      // 1) Firestore write (triggers live onSnapshot in section screen)
+      await addDoc(collection(db, 'users', user, 'sections', section.id, 'foods'), payload);
+
+      // 2) Optional write-through cache for instant bootstrap before snapshot arrives
+      try {
+        const cacheKey = SECTION_ITEMS_CACHE_KEY(user, section.id);
+        const raw = await AsyncStorage.getItem(cacheKey);
+        const arr = raw ? (JSON.parse(raw) as any[]) : [];
+        const localItem = {
+          id: Math.random().toString(36).slice(2), // temporary local id
+          ...payload,
+          // section screen expects ISO string on bootstrap and converts to Date
+          expiresAt: when.toISOString(),
+        };
+        await AsyncStorage.setItem(cacheKey, JSON.stringify([localItem, ...arr]));
+      } catch {}
+    } catch (e: any) {
+      Alert.alert('Save error', e?.message ?? String(e));
       return;
     }
 
@@ -166,6 +246,7 @@ export default function Camera() {
     closePicker();
     setScanned(null);
     setFood(null);
+    setNoDetectShown(false);
     router.push({
       pathname: '/(app)/sections/id',
       params: { id: section.id, title: section.name, color: section.color },
@@ -328,7 +409,11 @@ export default function Camera() {
                   <Text style={{ color: 'white', fontWeight: '700' }}>Add to Section</Text>
                 </Pressable>
                 <Pressable
-                  onPress={() => { setScanned(null); setFood(null); }}
+                  onPress={() => {
+                    setScanned(null);
+                    setFood(null);
+                    setNoDetectShown(false);
+                  }}
                   style={{ backgroundColor: '#444', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 }}
                 >
                   <Text style={{ color: 'white' }}>Clear</Text>
@@ -401,3 +486,4 @@ export default function Camera() {
     </View>
   );
 }
+

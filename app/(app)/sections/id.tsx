@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react';
+// app/(app)/section/[id].tsx
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -15,7 +16,9 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
-import { ensureAnonAuth, db, serverTimestamp } from '@/FirebaseConfig';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+import { auth, db, serverTimestamp, ensureAnonAuth } from '@/FirebaseConfig';
 import {
   collection,
   addDoc,
@@ -25,7 +28,10 @@ import {
   onSnapshot,
   query,
   orderBy,
+  type Timestamp,
+  getDocs,
 } from 'firebase/firestore';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 
 type Food = {
   id: string;
@@ -38,16 +44,27 @@ type Food = {
   notifId?: string | null;
 };
 
+const STORAGE_KEY = (uid: string, sectionId: string) =>
+  `fridgy:items:${uid}:${sectionId}`;
+
 function daysLeft(date: Date | null) {
   if (!date) return 9999;
   const ms = date.getTime() - Date.now();
   return Math.ceil(ms / (1000 * 60 * 60 * 24));
 }
 
+// Cross-platform scheduled local notification (9:00am on the chosen day; if past, fire in ~5s)
 async function scheduleExpiryNotification(foodName: string, when: Date) {
-  if (Platform.OS !== 'ios') return undefined;
   try {
     const Notifications = await import('expo-notifications');
+
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('expirations', {
+        name: 'Expirations',
+        importance: Notifications.AndroidImportance.DEFAULT,
+      });
+    }
+
     const d = new Date(when);
     d.setHours(9, 0, 0, 0);
 
@@ -82,6 +99,7 @@ export default function SectionItems() {
   const [items, setItems] = useState<Food[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Add form state
   const [showForm, setShowForm] = useState<boolean>(false);
   const [name, setName] = useState('');
   const [cal, setCal] = useState('');
@@ -91,6 +109,7 @@ export default function SectionItems() {
   const [date, setDate] = useState<Date>(new Date());
   const [showPicker, setShowPicker] = useState(false);
 
+  // Edit modal state
   const [editOpen, setEditOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [eName, setEName] = useState('');
@@ -100,12 +119,10 @@ export default function SectionItems() {
   const [eF, setEF] = useState('');
   const [eDate, setEDate] = useState<Date>(new Date());
   const [eShowPicker, setEShowPicker] = useState(false);
-  const [eNotifId, setENotifId] = useState<string | null | undefined>(
-    undefined,
-  );
+  const [eNotifId, setENotifId] = useState<string | null | undefined>(undefined);
 
+  // Ask permission (best effort)
   useEffect(() => {
-    if (Platform.OS !== 'ios') return;
     (async () => {
       try {
         const Notifications = await import('expo-notifications');
@@ -114,78 +131,124 @@ export default function SectionItems() {
     })();
   }, []);
 
+  // Auth: prefer existing user; fallback to anon
   useEffect(() => {
-    if (!sectionId) {
-      setLoading(false);
-      return;
-    }
+    const unsub = onAuthStateChanged(auth, async (user) => {
+      try {
+        if (user?.uid) return setUid(user.uid);
+        const anon =
+          typeof ensureAnonAuth === 'function'
+            ? await ensureAnonAuth()
+            : (await signInAnonymously(auth)).user;
+        setUid(anon.uid);
+      } catch {
+        const { user: anon } = await signInAnonymously(auth);
+        setUid(anon.uid);
+      }
+    });
+    return unsub;
+  }, []);
+
+  // Bootstrap from cache, then live-sync with Firestore
+  useEffect(() => {
+    if (!uid || !sectionId) return;
+
+    const key = STORAGE_KEY(uid, sectionId);
     let unsub: undefined | (() => void);
+    let gotSnapshot = false;
 
     (async () => {
-      const user = await ensureAnonAuth();
-      setUid(user.uid);
+      try {
+        // 1) Fast local boot
+        const cached = await AsyncStorage.getItem(key);
+        if (cached) {
+          const parsed: any[] = JSON.parse(cached);
+          setItems(
+            parsed.map((it) => ({
+              ...it,
+              expiresAt: it.expiresAt ? new Date(it.expiresAt) : null,
+            })) as Food[],
+          );
+          setLoading(false);
+        }
 
-      const foodsRef = collection(
-        db,
-        'users',
-        user.uid,
-        'sections',
-        sectionId,
-        'foods',
-      );
-      const qRef = query(foodsRef, orderBy('expiresAt', 'asc'));
+        // 2) Live Firestore feed
+        const foodsRef = collection(
+          db,
+          'users',
+          uid,
+          'sections',
+          sectionId,
+          'foods',
+        );
+        const qRef = query(foodsRef, orderBy('expiresAt', 'asc'));
 
-      unsub = onSnapshot(
-        qRef,
-        (snap) => {
-          const rows: Food[] = snap.docs.map((d) => {
-            const data = d.data() as any;
-            const expiresDate: Date | null = data.expiresAt?.toDate
-              ? data.expiresAt.toDate()
-              : data.expiresAt instanceof Date
+        unsub = onSnapshot(
+          qRef,
+          (snap) => {
+            const rows: Food[] = snap.docs.map((d) => {
+              const data = d.data() as any;
+              const expires: Date | null = data.expiresAt?.toDate
+                ? (data.expiresAt as Timestamp).toDate()
+                : data.expiresAt instanceof Date
                 ? data.expiresAt
+                : data.expiresAt
+                ? new Date(data.expiresAt)
                 : null;
-
-            return {
-              id: d.id,
-              name: String(data.name ?? ''),
-              expiresAt: expiresDate,
-              calories: Number(data.calories ?? 0),
-              protein: Number(data.protein ?? 0),
-              carbs: Number(data.carbs ?? 0),
-              fats: Number(data.fats ?? 0),
-              notifId: data.notifId ?? null,
-            } as Food;
-          });
-          setItems(rows);
-          setLoading(false);
-        },
-        (err) => {
-          console.log('foods onSnapshot error', err);
-          Alert.alert('Firestore error', err.message ?? String(err));
-          setLoading(false);
-        },
-      );
+              return {
+                id: d.id,
+                name: String(data.name ?? ''),
+                expiresAt: expires,
+                calories: Number(data.calories ?? 0),
+                protein: Number(data.protein ?? 0),
+                carbs: Number(data.carbs ?? 0),
+                fats: Number(data.fats ?? 0),
+                notifId: data.notifId ?? null,
+              };
+            });
+            setItems(rows);
+            setLoading(false);
+            gotSnapshot = true;
+            // write-through cache for next fast load
+            AsyncStorage.setItem(
+              key,
+              JSON.stringify(
+                rows.map((r) => ({ ...r, expiresAt: r.expiresAt?.toISOString() })),
+              ),
+            ).catch(() => {});
+          },
+          (err) => {
+            console.log('foods onSnapshot error', err);
+            Alert.alert('Firestore error', err.message ?? String(err));
+            setLoading(false);
+          },
+        );
+      } catch (e) {
+        console.log('bootstrap error', e);
+        if (!gotSnapshot) setLoading(false);
+      }
     })();
 
     return () => {
       if (unsub) unsub();
     };
-  }, [sectionId]);
+  }, [uid, sectionId]);
 
+  // ------ Mutations ------
   const addItem = async () => {
     const nm = name.trim();
     if (!nm) return Alert.alert('Name required');
 
     try {
-      const notifId = await scheduleExpiryNotification(nm, date);
+      const when = date ?? new Date();
+      const notifId = await scheduleExpiryNotification(nm, when);
       const uidNow = uid ?? (await ensureAnonAuth()).uid;
 
       await addDoc(
         collection(db, 'users', uidNow, 'sections', sectionId, 'foods'),
         {
           name: nm,
-          expiresAt: date,
+          expiresAt: when, // Firestore stores as Timestamp
           calories: Number(cal) || 0,
           protein: Number(p) || 0,
           carbs: Number(c) || 0,
@@ -196,6 +259,7 @@ export default function SectionItems() {
         },
       );
 
+      // Reset form
       setName('');
       setCal('');
       setP('');
@@ -211,16 +275,14 @@ export default function SectionItems() {
 
   const deleteItem = async (item: Food) => {
     try {
-      if (Platform.OS === 'ios' && item.notifId) {
+      if ((item.notifId ?? null) && (Platform.OS === 'ios' || Platform.OS === 'android')) {
         try {
           const Notifications = await import('expo-notifications');
-          await Notifications.cancelScheduledNotificationAsync(item.notifId);
+          await Notifications.cancelScheduledNotificationAsync(item.notifId as string);
         } catch {}
       }
       const uidNow = uid ?? (await ensureAnonAuth()).uid;
-      await deleteDoc(
-        doc(db, 'users', uidNow, 'sections', sectionId, 'foods', item.id),
-      );
+      await deleteDoc(doc(db, 'users', uidNow, 'sections', sectionId, 'foods', item.id));
     } catch (e: any) {
       console.log('delete food error', e);
     }
@@ -244,28 +306,26 @@ export default function SectionItems() {
     if (!nm) return Alert.alert('Name required');
 
     try {
-      if (Platform.OS === 'ios' && eNotifId) {
+      // Cancel old notif (if any), then schedule a fresh one
+      if ((eNotifId ?? null) && (Platform.OS === 'ios' || Platform.OS === 'android')) {
         try {
           const Notifications = await import('expo-notifications');
-          await Notifications.cancelScheduledNotificationAsync(eNotifId);
+          await Notifications.cancelScheduledNotificationAsync(eNotifId as string);
         } catch {}
       }
-      const newNotifId = await scheduleExpiryNotification(nm, eDate);
+      const newNotifId = await scheduleExpiryNotification(nm, eDate ?? new Date());
 
       const uidNow = uid ?? (await ensureAnonAuth()).uid;
-      await updateDoc(
-        doc(db, 'users', uidNow, 'sections', sectionId, 'foods', editId),
-        {
-          name: nm,
-          expiresAt: eDate,
-          calories: Number(eCal) || 0,
-          protein: Number(eP) || 0,
-          carbs: Number(eC) || 0,
-          fats: Number(eF) || 0,
-          notifId: newNotifId ?? null,
-          updatedAt: serverTimestamp(),
-        },
-      );
+      await updateDoc(doc(db, 'users', uidNow, 'sections', sectionId, 'foods', editId), {
+        name: nm,
+        expiresAt: eDate ?? new Date(),
+        calories: Number(eCal) || 0,
+        protein: Number(eP) || 0,
+        carbs: Number(eC) || 0,
+        fats: Number(eF) || 0,
+        notifId: newNotifId ?? null,
+        updatedAt: serverTimestamp(),
+      });
 
       setEditOpen(false);
       setEditId(null);
@@ -275,7 +335,8 @@ export default function SectionItems() {
     }
   };
 
-  const onScanResult = (data: Partial<Food>) => {
+  // Allow Camera screen to prefill this form
+  const onScanResult = useCallback((data: Partial<Food>) => {
     if (data.name) setName(String(data.name));
     if (data.expiresAt) setDate(data.expiresAt);
     if (data.calories != null) setCal(String(data.calories));
@@ -283,7 +344,7 @@ export default function SectionItems() {
     if (data.carbs != null) setC(String(data.carbs));
     if (data.fats != null) setF(String(data.fats));
     setShowForm(true);
-  };
+  }, []);
 
   if (!sectionId) {
     return (
@@ -300,8 +361,10 @@ export default function SectionItems() {
     );
   }
 
+  // ------ UI ------
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#181818' }}>
+      {/* Header */}
       <View
         style={{
           paddingHorizontal: 16,
@@ -320,14 +383,12 @@ export default function SectionItems() {
           {title || 'Section'}
         </Text>
 
-        <Pressable
-          onPress={() => setShowForm((s) => !s)}
-          style={{ padding: 6 }}
-        >
+        <Pressable onPress={() => setShowForm((s) => !s)} style={{ padding: 6 }}>
           <Ionicons name={showForm ? 'close' : 'add'} size={22} color="#fff" />
         </Pressable>
       </View>
 
+      {/* Add item form */}
       {showForm && (
         <View style={{ paddingHorizontal: 16, paddingBottom: 8 }}>
           <View
@@ -364,9 +425,7 @@ export default function SectionItems() {
                   marginBottom: 8,
                 }}
               >
-                <Text style={{ color: '#bbb', marginBottom: 6 }}>
-                  Expiration
-                </Text>
+                <Text style={{ color: '#bbb', marginBottom: 6 }}>Expiration</Text>
                 <DateTimePicker
                   value={date}
                   mode="date"
@@ -393,8 +452,7 @@ export default function SectionItems() {
                   }}
                 >
                   <Text style={{ color: 'white' }}>
-                    Expiration: {date.toISOString().slice(0, 10)} (tap to
-                    change)
+                    Expiration: {date.toISOString().slice(0, 10)} (tap to change)
                   </Text>
                 </Pressable>
                 {showPicker && (
@@ -485,13 +543,7 @@ export default function SectionItems() {
               />
             </View>
 
-            <View
-              style={{
-                flexDirection: 'row',
-                justifyContent: 'flex-end',
-                gap: 8,
-              }}
-            >
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
               <Pressable
                 onPress={() => setShowForm(false)}
                 style={{
@@ -520,10 +572,9 @@ export default function SectionItems() {
         </View>
       )}
 
+      {/* List / Loading */}
       {loading ? (
-        <View
-          style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}
-        >
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
           <ActivityIndicator color="#fff" />
         </View>
       ) : (
@@ -560,19 +611,14 @@ export default function SectionItems() {
                       <Text style={{ color: 'white', fontWeight: '700' }}>
                         {item.name}
                       </Text>
-                      <Pressable
-                        onPress={() => deleteItem(item)}
-                        style={{ padding: 6 }}
-                      >
+                      <Pressable onPress={() => deleteItem(item)} style={{ padding: 6 }}>
                         <Text style={{ color: '#bbb' }}>Delete</Text>
                       </Pressable>
                     </View>
                     <Text style={{ color: 'white', marginTop: 4 }}>
                       Expires:{' '}
-                      {item.expiresAt
-                        ? item.expiresAt.toISOString().slice(0, 10)
-                        : '—'}{' '}
-                      ({d}d left)
+                      {item.expiresAt ? item.expiresAt.toISOString().slice(0, 10) : '—'} (
+                      {d}d left)
                     </Text>
                     <View
                       style={{
@@ -581,18 +627,10 @@ export default function SectionItems() {
                         marginTop: 6,
                       }}
                     >
-                      <Text style={{ color: '#BBB', fontSize: 12 }}>
-                        Cal {item.calories}
-                      </Text>
-                      <Text style={{ color: '#BBB', fontSize: 12 }}>
-                        P {item.protein}g
-                      </Text>
-                      <Text style={{ color: '#BBB', fontSize: 12 }}>
-                        C {item.carbs}g
-                      </Text>
-                      <Text style={{ color: '#BBB', fontSize: 12 }}>
-                        F {item.fats}g
-                      </Text>
+                      <Text style={{ color: '#BBB', fontSize: 12 }}>Cal {item.calories}</Text>
+                      <Text style={{ color: '#BBB', fontSize: 12 }}>P {item.protein}g</Text>
+                      <Text style={{ color: '#BBB', fontSize: 12 }}>C {item.carbs}g</Text>
+                      <Text style={{ color: '#BBB', fontSize: 12 }}>F {item.fats}g</Text>
                     </View>
                   </View>
                 </Pressable>
@@ -602,6 +640,7 @@ export default function SectionItems() {
         </ScrollView>
       )}
 
+      {/* Edit Modal */}
       <Modal
         transparent
         visible={editOpen}
@@ -661,9 +700,7 @@ export default function SectionItems() {
                   marginBottom: 8,
                 }}
               >
-                <Text style={{ color: '#bbb', marginBottom: 6 }}>
-                  Expiration
-                </Text>
+                <Text style={{ color: '#bbb', marginBottom: 6 }}>Expiration</Text>
                 <DateTimePicker
                   value={eDate}
                   mode="date"
@@ -690,8 +727,7 @@ export default function SectionItems() {
                   }}
                 >
                   <Text style={{ color: 'white' }}>
-                    Expiration: {eDate.toISOString().slice(0, 10)} (tap to
-                    change)
+                    Expiration: {eDate.toISOString().slice(0, 10)} (tap to change)
                   </Text>
                 </Pressable>
                 {eShowPicker && (
