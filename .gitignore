@@ -58,3 +58,16 @@ CLAUDE.md.save.expo/
 # local env files
 .env
 .env.*.local
+# Local environment files
+.env
+.env.*
+.env.local
+
+# Firebase / Google service configs
+GoogleService-Info.plist
+google-services.json
+FirebaseConfig.ts
+firebase.json
+.firebaserc
+database.rules.json
+storage.rules
