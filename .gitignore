@@ -65,9 +65,4 @@ CLAUDE.md.save.expo/
 
 # Firebase / Google service configs
 GoogleService-Info.plist
-google-services.json
-FirebaseConfig.ts
-firebase.json
-.firebaserc
-database.rules.json
-storage.rules
+Projects/FRIDGY/FirebaseConfig.ts
