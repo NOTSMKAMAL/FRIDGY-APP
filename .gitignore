@@ -55,3 +55,6 @@ database.rules.json
 # Temporary / AI files
 CLAUDE.md
 CLAUDE.md.save.expo/
+# local env files
+.env
+.env.*.local
