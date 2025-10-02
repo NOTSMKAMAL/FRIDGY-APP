@@ -65,4 +65,4 @@ CLAUDE.md.save.expo/
 
 # Firebase / Google service configs
 GoogleService-Info.plist
-Projects/FRIDGY/FirebaseConfig.ts
+FirebaseConfig.ts
