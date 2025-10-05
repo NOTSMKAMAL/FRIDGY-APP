@@ -4,7 +4,9 @@
 [![Expo](https://img.shields.io/badge/Built_with-Expo-1C1E24?logo=expo&logoColor=white)](https://expo.dev/)
 [![Firebase](https://img.shields.io/badge/Backend-Firebase-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com/)
 [![Platform](https://img.shields.io/badge/Platform-iOS-blue?logo=apple&logoColor=white)](https://apps.apple.com/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![React Native](https://img.shields.io/badge/Framework-React_Native-61DAFB?logo=react&logoColor=black)](https://reactnative.dev/)
+[![TypeScript](https://img.shields.io/badge/Language-TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![GitHub](https://img.shields.io/badge/Source-GitHub-181717?logo=github&logoColor=white)](https://github.com/)
 
 ---
 
@@ -62,5 +64,4 @@ Siri Shortcuts + iOS widgets
 📬 Contact
 
 Questions or feedback?
-📎 Reach out via LinkedIn
- or open an issue.
+📎 Reach out via [LinkedIn](https://www.linkedin.com/in/sm-kamal-260728298/).
