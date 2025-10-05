@@ -37,15 +37,6 @@ Designed to make food tracking simple, visual, and effortless.
 
 ---
 
-## 🧠 Data Model  
-```plaintext
-users/{uid}
-  sections/{sectionId}
-    name, color, createdAt
-  items/{itemId}
-    name, macros, expiresAt, notifId
-  groceries/{itemId}
-    name, qty, checked, order
 🔄 Core App Flows
 
 Auth Bootstrap – Anonymous sign-in for instant access.
