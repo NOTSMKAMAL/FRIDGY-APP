@@ -1,30 +1,44 @@
-Fridgy
+# 🧊 Fridgy  
+**Smart fridge companion for iOS** — built with **Expo Router**, **TypeScript**, and **Firebase**  
 
-Fridgy is a smart fridge companion for iOS built with Expo Router, TypeScript, and Firebase.
-It helps you track what’s in your fridge, monitor expiration dates, and manage grocery lists—all in one place.
+[![Expo](https://img.shields.io/badge/Built_with-Expo-1C1E24?logo=expo&logoColor=white)](https://expo.dev/)
+[![Firebase](https://img.shields.io/badge/Backend-Firebase-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com/)
+[![Platform](https://img.shields.io/badge/Platform-iOS-blue?logo=apple&logoColor=white)](https://apps.apple.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-🧊 Coming soon to the Apple App Store
+---
 
-Features
+## 📱 Overview  
+Fridgy helps you keep track of what’s in your fridge, stay ahead of expiration dates, and manage grocery lists — all from your iPhone.  
+Designed to make food tracking simple, visual, and effortless.  
 
-Visual fridge layout — Items are shown in color-coded sections, making the digital view feel like opening a real fridge.
+> 🧃 **Coming soon to the Apple App Store**
 
-Barcode scanning — Instantly fetches nutrition facts using the FatSecret API and saves them to Firestore.
+---
 
-Offline caching — AsyncStorage ensures your fridge loads instantly even without network access.
+## ✨ Features  
+- 🧩 **Visual Fridge Layout** — Color-coded sections mimic your real fridge.  
+- 🔍 **Barcode Scanning** — Instantly fetch nutrition facts using the FatSecret API.  
+- 🔔 **Smart Expiration Reminders** — Never let food go bad again.  
+- 📶 **Offline Caching** — View and update your fridge even without internet.  
+- 🛒 **Real-Time Grocery Sync** — Drag-and-drop list stays updated across sessions.  
 
-Expiration reminders — Local notifications alert you before items spoil.
+---
 
-Smart grocery list — Drag-and-drop interface synced across devices in real time.
+## 🏗️ Tech Stack  
 
-Tech Overview
-Category	Stack
-UI	React Native + Expo Router + NativeWind
-Data	Firebase Auth + Cloud Firestore + AsyncStorage
-APIs	Expo Camera, Expo Notifications, Expo Haptics
-Integrations	FatSecret API (OAuth 1.0a) for nutrition lookup
-Tooling	TypeScript, ESLint, Prettier
-Data Structure
+| Category | Technology |
+|-----------|-------------|
+| UI | React Native · Expo Router · NativeWind |
+| Backend | Firebase Auth · Cloud Firestore · AsyncStorage |
+| APIs | Expo Camera · Expo Notifications · Expo Haptics |
+| Integrations | FatSecret API (OAuth 1.0a) |
+| Tooling | TypeScript · ESLint · Prettier |
+
+---
+
+## 🧠 Data Model  
+```plaintext
 users/{uid}
   sections/{sectionId}
     name, color, createdAt
@@ -32,31 +46,30 @@ users/{uid}
     name, macros, expiresAt, notifId
   groceries/{itemId}
     name, qty, checked, order
+🔄 Core App Flows
 
-Core Flows
+Auth Bootstrap – Anonymous sign-in for instant access.
 
-Auth bootstrap — Anonymous sign-in ensures a frictionless first-run experience.
+Inventory Loading – Firestore listeners keep data live.
 
-Inventory loading — Seeds starter sections and stays live via Firestore listeners.
+Barcode Intake – Scans, fetches nutrition, writes instantly.
 
-Barcode intake — Scans, fetches nutrition data, and saves it instantly.
+Expiry Tracking – Schedules notifications automatically.
 
-Expiry tracking — Schedules reminders for upcoming expirations.
+Grocery Sync – Real-time cross-session updates.
 
-Grocery sync — Real-time updates across sessions with Firestore listeners.
+🗺️ Roadmap
 
-Roadmap
+Shared households (multi-user fridge)
 
-Household sharing so multiple users can manage one fridge
-
-In-app analytics for waste reduction and nutrition stats
+Analytics on waste saved & nutrition intake
 
 Web companion with camera scanning
 
-Optional widget and Siri shortcuts integration
+Siri Shortcuts + iOS widgets
 
-Contact
+📬 Contact
 
-For questions or feedback, reach out on LinkedIn
- or open an issue here.
-Thanks for checking out Fridgy.
+Questions or feedback?
+📎 Reach out via LinkedIn
+ or open an issue.
