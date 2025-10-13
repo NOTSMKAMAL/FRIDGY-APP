@@ -1,9 +1,11 @@
+// app/(app)/settings.tsx
 import { useRouter } from 'expo-router';
 import { getAuth, signOut } from 'firebase/auth';
-import React, { memo, useState } from 'react';
+import React, { memo } from 'react';
 import { Pressable, Text, View, ScrollView, Switch } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useTheme } from '../theme/themeContext';
 
 const SettingItem = memo(function SettingItem({
   icon,
@@ -22,13 +24,14 @@ const SettingItem = memo(function SettingItem({
   onSwitchChange?: (value: boolean) => void;
   onPress?: () => void;
 }) {
+  const { palette } = useTheme();
   return (
     <Pressable
       onPress={onPress}
       style={{
-        backgroundColor: '#4A4A4A',
+        backgroundColor: palette.card,
         padding: 16,
-        borderRadius: 8,
+        borderRadius: 12,
         marginBottom: 12,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
@@ -37,6 +40,8 @@ const SettingItem = memo(function SettingItem({
         elevation: 2,
         flexDirection: 'row',
         alignItems: 'center',
+        borderWidth: 1,
+        borderColor: palette.border,
       }}
     >
       <View
@@ -44,20 +49,20 @@ const SettingItem = memo(function SettingItem({
           width: 40,
           height: 40,
           borderRadius: 20,
-          backgroundColor: '#black',
+          backgroundColor: palette.iconBg, // fixed '#black'
           justifyContent: 'center',
           alignItems: 'center',
           marginRight: 16,
         }}
       >
-        <Ionicons name={icon as any} size={20} color="white" />
+        <Ionicons name={icon as any} size={20} color={palette.text} />
       </View>
       <View style={{ flex: 1 }}>
         <Text
           style={{
             fontSize: 15,
             fontWeight: '600',
-            color: '#FFFFFF',
+            color: palette.text,
             marginBottom: subtitle ? 2 : 0,
           }}
         >
@@ -67,7 +72,7 @@ const SettingItem = memo(function SettingItem({
           <Text
             style={{
               fontSize: 13,
-              color: '#666',
+              color: palette.subtext,
               fontWeight: '400',
             }}
           >
@@ -75,15 +80,16 @@ const SettingItem = memo(function SettingItem({
           </Text>
         )}
       </View>
-      {hasSwitch && (
+      {hasSwitch ? (
         <Switch
-          value={switchValue}
+          value={!!switchValue}
           onValueChange={onSwitchChange}
-          trackColor={{ false: '#E0E0E0', true: '#007AFF' }}
-          thumbColor={switchValue ? '#fff' : '#fff'}
+          trackColor={{ false: '#E0E0E0', true: palette.tint }}
+          thumbColor="#fff"
         />
+      ) : (
+        <Ionicons name="chevron-forward" size={20} color={palette.subtext} />
       )}
-      {!hasSwitch && <Ionicons name="chevron-forward" size={20} color="#666" />}
     </Pressable>
   );
 });
@@ -91,8 +97,7 @@ const SettingItem = memo(function SettingItem({
 export default function Settings() {
   const router = useRouter();
   const auth = getAuth();
-  const [notifications, setNotifications] = useState(true);
-  const [darkMode, setDarkMode] = useState(false);
+  const { palette, isDark, setDarkEnabled } = useTheme();
 
   const handleLogout = async () => {
     await signOut(auth);
@@ -100,7 +105,7 @@ export default function Settings() {
   };
 
   return (
-    <SafeAreaView style={{ flex: 1, backgroundColor: '#181818' }}>
+    <SafeAreaView style={{ flex: 1, backgroundColor: palette.bg }}>
       <ScrollView
         style={{ flex: 1 }}
         contentContainerStyle={{
@@ -113,7 +118,7 @@ export default function Settings() {
           style={{
             fontSize: 24,
             fontWeight: '600',
-            color: 'white',
+            color: palette.text,
             marginBottom: 60,
             textAlign: 'center',
           }}
@@ -126,18 +131,19 @@ export default function Settings() {
           title="Push Notifications"
           subtitle="Get notified about expiring items"
           hasSwitch
-          switchValue={notifications}
-          onSwitchChange={setNotifications}
+          switchValue={true}
+          onSwitchChange={() => {}}
         />
 
         <SettingItem
           icon="moon"
           title="Dark Mode"
-          subtitle="Switch to dark theme"
+          subtitle="Toggle app appearance"
           hasSwitch
-          switchValue={darkMode}
-          onSwitchChange={setDarkMode}
+          switchValue={isDark}
+          onSwitchChange={setDarkEnabled}
         />
+
         <SettingItem
           icon="person"
           title="Profile"
@@ -177,7 +183,7 @@ export default function Settings() {
           <Text
             style={{
               fontSize: 13,
-              color: '#666',
+              color: palette.subtext,
               textAlign: 'center',
               fontWeight: '400',
             }}
